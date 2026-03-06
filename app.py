@@ -74,7 +74,7 @@ with tab_upload:
 
             store.set_default_k(int(k_default))
             st.success("Done.")
-            st.dataframe(pd.DataFrame(results), use_container_width=True)
+            st.dataframe(pd.DataFrame(results), width='stretch')
 
 # ----------------------------
 # 2) Library
@@ -87,7 +87,7 @@ with tab_library:
         st.info("No documents indexed yet. Upload PDFs in the first tab.")
     else:
         df = pd.DataFrame(docs).sort_values(["created_at"], ascending=False)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
 
         st.markdown("### Actions")
         col1, col2 = st.columns(2)
@@ -222,7 +222,7 @@ with tab_eval:
     if eval_file is not None:
         dataset = load_eval_dataset(eval_file)
         st.write(f"Loaded {len(dataset)} evaluation queries.")
-        st.dataframe(pd.DataFrame(dataset).head(20), use_container_width=True)
+        st.dataframe(pd.DataFrame(dataset).head(20), width='stretch')
 
         if st.button("📊 Run evaluation", type="primary"):
             with st.spinner("Running retrieval evaluation..."):
@@ -238,4 +238,4 @@ with tab_eval:
             st.json(metrics)
 
             st.markdown("### Per-query results (top hits)")
-            st.dataframe(pd.DataFrame(per_query), use_container_width=True)
+            st.dataframe(pd.DataFrame(per_query), width='stretch')
