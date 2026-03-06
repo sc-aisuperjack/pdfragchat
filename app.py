@@ -1,8 +1,8 @@
-import json
 import time
 from pathlib import Path
-import streamlit as st
+
 import pandas as pd
+import streamlit as st
 
 from src.config import get_settings
 from src.store import DocStore
@@ -26,17 +26,27 @@ tab_upload, tab_library, tab_chat, tab_eval = st.tabs(
 # ----------------------------
 with tab_upload:
     st.subheader("Upload PDFs")
-    st.caption("PDFs are converted to Markdown with PyMuPDF. Chunking, embeddings, vector store, retrieval, and chat are LangChain-based.")
+    st.caption(
+        "PDFs are converted to Markdown with PyMuPDF. Chunking, embeddings, vector store, retrieval, and chat are LangChain-based."
+    )
 
-    uploaded = st.file_uploader("Upload one or more PDFs", type=["pdf"], accept_multiple_files=True)
+    uploaded = st.file_uploader(
+        "Upload one or more PDFs", type=["pdf"], accept_multiple_files=True
+    )
 
     colA, colB, colC = st.columns(3)
     with colA:
-        chunk_size = st.number_input("Chunk size (chars)", min_value=300, max_value=5000, value=1200, step=100)
+        chunk_size = st.number_input(
+            "Chunk size (chars)", min_value=300, max_value=5000, value=1200, step=100
+        )
     with colB:
-        overlap = st.number_input("Overlap (chars)", min_value=0, max_value=2000, value=150, step=25)
+        overlap = st.number_input(
+            "Overlap (chars)", min_value=0, max_value=2000, value=150, step=25
+        )
     with colC:
-        k_default = st.number_input("Default retrieval k", min_value=1, max_value=20, value=5, step=1)
+        k_default = st.number_input(
+            "Default retrieval k", min_value=1, max_value=20, value=5, step=1
+        )
 
     if uploaded:
         if st.button("🚀 Convert → Chunk → Embed → Index (with caching)", type="primary"):
@@ -76,8 +86,7 @@ with tab_library:
     if not docs:
         st.info("No documents indexed yet. Upload PDFs in the first tab.")
     else:
-        df = pd.DataFrame(docs)
-        df = df.sort_values(["created_at"], ascending=False)
+        df = pd.DataFrame(docs).sort_values(["created_at"], ascending=False)
         st.dataframe(df, use_container_width=True)
 
         st.markdown("### Actions")
@@ -85,7 +94,7 @@ with tab_library:
 
         with col1:
             selected = st.selectbox(
-                "Select active document for chat",
+                "Select active document (used as default in chat)",
                 options=[d["doc_hash"] for d in docs],
                 format_func=lambda h: f"{h} — {store.get_doc_title(h)}",
             )
@@ -104,61 +113,94 @@ with tab_library:
                 st.success(f"Deleted {to_delete}. Refresh the page if needed.")
 
 # ----------------------------
-# 3) Chat
+# 3) Chat (MULTI-DOC)
 # ----------------------------
 with tab_chat:
-    st.subheader("Chat with any indexed PDF")
+    st.subheader("Chat with one or more indexed PDFs")
     docs = store.list_documents()
 
     if not docs:
         st.info("Upload and index at least one PDF first.")
         st.stop()
 
+    # Default selection: active doc (or first doc)
     active = store.get_active_doc() or docs[0]["doc_hash"]
-    doc_choice = st.selectbox(
-        "Choose document",
-        options=[d["doc_hash"] for d in docs],
-        index=[d["doc_hash"] for d in docs].index(active) if active in [d["doc_hash"] for d in docs] else 0,
+    doc_hashes = [d["doc_hash"] for d in docs]
+
+    selected_docs = st.multiselect(
+        "Choose documents to chat with",
+        options=doc_hashes,
+        default=[active] if active in doc_hashes else [doc_hashes[0]],
         format_func=lambda h: f"{h} — {store.get_doc_title(h)}",
     )
-    store.set_active_doc(doc_choice)
 
-    k = st.slider("Retrieval k", 1, 20, value=store.get_default_k(), step=1)
+    if not selected_docs:
+        st.warning("Select at least one document.")
+        st.stop()
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    # Keep 'active doc' concept aligned to the first selected
+    store.set_active_doc(selected_docs[0])
 
-    for msg in st.session_state.chat_history:
+    k = st.slider(
+        "Retrieval k (global across selected docs)",
+        1,
+        20,
+        value=store.get_default_k(),
+        step=1,
+    )
+
+    # Chat history should be per selection-set to avoid mixing different doc groups
+    selection_key = ",".join(sorted(selected_docs))
+    chat_key = f"chat_history::{selection_key}"
+
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+
+    # Render history for this selection set
+    for msg in st.session_state[chat_key]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    question = st.chat_input("Ask something about this document...")
+    question = st.chat_input("Ask something about the selected document(s)...")
     if question:
-        st.session_state.chat_history.append({"role": "user", "content": question})
+        st.session_state[chat_key].append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.markdown(question)
 
         with st.spinner("Retrieving + answering..."):
-            answer, sources = rag.ask(doc_hash=doc_choice, question=question, k=int(k))
+            # Requires RagEngine.ask_multi(doc_hashes, question, k)
+            answer, sources = rag.ask_multi(
+                doc_hashes=selected_docs,
+                question=question,
+                k=int(k),
+            )
 
         with st.chat_message("assistant"):
             st.markdown(answer)
 
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
+        st.session_state[chat_key].append({"role": "assistant", "content": answer})
 
-        with st.expander("Sources (chunk text + page numbers)"):
+        with st.expander("Sources (doc + pages + chunk + score)"):
             for i, s in enumerate(sources, start=1):
-                meta = s.get("metadata", {})
-                pages = meta.get("pages", [])
-                st.markdown(f"**Source {i}** — pages: {pages} — chunk: {meta.get('chunk_index')}")
-                st.text(s.get("text", "")[:2500] + ("..." if len(s.get("text", "")) > 2500 else ""))
+                meta = s.get("metadata", {}) or {}
+                st.markdown(
+                    f"**Source {i}** — doc: {meta.get('doc_title', meta.get('doc_hash'))} "
+                    f"({meta.get('doc_hash')}) — pages: {meta.get('pages')} — "
+                    f"chunk: {meta.get('chunk_index')} — score: {s.get('score')}"
+                )
+                st.text(
+                    s.get("text", "")[:2500]
+                    + ("..." if len(s.get("text", "")) > 2500 else "")
+                )
 
 # ----------------------------
 # 4) Evaluate Retrieval
 # ----------------------------
 with tab_eval:
     st.subheader("Evaluate retrieval (MRR, Accuracy/Hit@k, Recall@k, Precision@k, MAP)")
-    st.caption("You provide an eval dataset. The app tests retrieval quality against the expected page or expected chunk id.")
+    st.caption(
+        "Upload an eval dataset and measure retrieval quality against expected pages or expected chunk ids."
+    )
 
     docs = store.list_documents()
     if not docs:
@@ -174,7 +216,7 @@ with tab_eval:
     k_eval = st.slider("k for evaluation", 1, 20, value=5, step=1)
 
     st.markdown("### Upload evaluation file")
-    st.caption("Supported: JSONL or CSV. Required columns/fields: query, expected_pages OR expected_chunk_ids.")
+    st.caption("Supported: JSONL or CSV. Required fields: query, expected_pages OR expected_chunk_ids.")
     eval_file = st.file_uploader("Upload eval dataset", type=["jsonl", "csv"])
 
     if eval_file is not None:
