@@ -1,0 +1,17 @@
+streamlit
+python-dotenv
+pymupdf
+
+langchain
+langchain-classic
+langchain-community
+langchain-openai
+langchain-text-splitters
+
+faiss-cpu
+
+pandas
+numpy
+
+pytest
+reportlab
